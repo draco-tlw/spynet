@@ -1,0 +1,21 @@
+[project]
+name = "spynet"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "draco-tlw", email = "draco.tlw@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "matplotlib>=3.11.1",
+    "opencv-python>=5.0.0.93",
+    "tensorflow[and-cuda]>=2.21.0",
+]
+
+[project.scripts]
+spynet = "spynet:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
