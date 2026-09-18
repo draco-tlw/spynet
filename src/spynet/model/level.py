@@ -42,29 +42,8 @@ class SPyNetLevel(keras.Model):
 
         return x
 
-    @tf.function
-    def _prepare_y(
-        self,
-        V_k_prev_upscaled: tf.Tensor,
-        V_k_hat: tf.Tensor,
-    ):
-        y = V_k_hat - V_k_prev_upscaled
-
-        return y
-
     def call(self, inputs: tuple[tf.Tensor, tf.Tensor, tf.Tensor], training=False):
         I1_k, I2_k, V_k_prev_upscaled = inputs
         x = self._prepare_x(I1_k, I2_k, V_k_prev_upscaled)
 
         return self._model(x, training=training)
-
-    def train_step(
-        self, data: tuple[tuple[tf.Tensor, tf.Tensor, tf.Tensor], tf.Tensor]
-    ):
-        x, y = data
-        _, _, V_k_prev_upscaled = x
-        V_k_hat = y
-
-        y = self._prepare_y(V_k_prev_upscaled, V_k_hat)
-
-        return super().train_step((x, y))

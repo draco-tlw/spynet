@@ -105,9 +105,36 @@ class SPyNet(keras.Model):
             V_prev_upscaled = utils.upscale(V_i, is_flow=True)
 
         x = I1_k, I2_k, V_prev_upscaled
-        y = V_hat_k
+        y = V_hat_k - V_prev_upscaled
 
         return x, y
+
+    def _create_level_dataset(self, k: int, pyramid_data: tf.data.Dataset):
+        sample_x = None
+        sample_y = None
+
+        for batch in pyramid_data.take(1):
+            p_i1, p_i2, p_v = batch
+            sample_x, sample_y = self._prepare_level_k_data(k, p_i1, p_i2, p_v)
+
+        if sample_x is None or sample_y is None:
+            raise ValueError("Dataset is empty. Cannot extract tensor specifications.")
+
+        x_spec = tuple(tf.TensorSpec(t.shape, t.dtype) for t in sample_x)
+        y_spec = tf.TensorSpec(sample_y.shape, sample_y.dtype)
+
+        def gen():
+            for batch in pyramid_data:
+                p_i1, p_i2, p_v = batch
+                yield self._prepare_level_k_data(k, p_i1, p_i2, p_v)
+
+        ds = tf.data.Dataset.from_generator(gen, output_signature=(x_spec, y_spec))
+
+        ds = ds.apply(
+            tf.data.experimental.assert_cardinality(pyramid_data.cardinality())
+        )
+
+        return ds.prefetch(tf.data.AUTOTUNE)
 
     def train_sequential(
         self,
@@ -157,21 +184,11 @@ class SPyNet(keras.Model):
 
             current_initial_epoch = start_epoch if k == start_level else 0
 
-            level_data = pyramid_data.map(
-                lambda pyr_I1, pyr_I2, pyr_V_hat, k=k: self._prepare_level_k_data(
-                    k, pyr_I1, pyr_I2, pyr_V_hat
-                ),
-                num_parallel_calls=tf.data.AUTOTUNE,
-            )
+            level_data = self._create_level_dataset(k, pyramid_data)
 
             level_val_data = None
             if val_data is not None and pyramid_val_data is not None:
-                level_val_data = pyramid_val_data.map(
-                    lambda pyr_I1, pyr_I2, pyr_V_hat, k=k: self._prepare_level_k_data(
-                        k, pyr_I1, pyr_I2, pyr_V_hat
-                    ),
-                    num_parallel_calls=tf.data.AUTOTUNE,
-                )
+                level_val_data = self._create_level_dataset(k, pyramid_val_data)
 
             if k > 0 and current_initial_epoch == 0:
                 for x, _ in level_data.take(1):
@@ -189,7 +206,9 @@ class SPyNet(keras.Model):
                 Checkpoint(
                     self, current_level=k, total_epochs=epochs, project_dir=project_dir
                 ),
-                keras.callbacks.CSVLogger(project_dir / "results.csv", append=True),
+                keras.callbacks.CSVLogger(
+                    project_dir / f"results_level_{k}.csv", append=True
+                ),
             ]
 
             if val_data is not None and early_stopping_patience is not None:
