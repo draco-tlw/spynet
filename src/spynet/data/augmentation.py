@@ -9,6 +9,7 @@ def _geometric_augmentation(
     i1: np.ndarray,
     i2: np.ndarray,
     flow: np.ndarray,
+    valid: np.ndarray,
     scale=(0.5, 2.0),
     angle=(-17.0, 17.0),
     translate_x=(-20.0, 20.0),
@@ -51,6 +52,14 @@ def _geometric_augmentation(
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=0,
     )
+    valid_warped = cv2.warpAffine(
+        valid,
+        M,
+        (w, h),
+        flags=cv2.INTER_NEAREST,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    )
 
     A = M[:, :2]
 
@@ -58,10 +67,14 @@ def _geometric_augmentation(
     flow_corrected = np.dot(flow_flat, A.T)
     flow_warped = flow_corrected.reshape(h, w, 2)
 
+    if len(valid_warped.shape) == 2:
+        valid_warped = np.expand_dims(valid_warped, axis=-1)
+
     return (
         i1_warped.astype(np.float32),
         i2_warped.astype(np.float32),
         flow_warped.astype(np.float32),
+        valid_warped.astype(np.float32),
     )
 
 
@@ -70,6 +83,7 @@ def _tf_geometric_augmentation(
     i1: tf.Tensor,
     i2: tf.Tensor,
     flow: tf.Tensor,
+    valid: tf.Tensor,
     scale_range=(0.5, 2.0),
     angle_range=(-17.0, 17.0),
     tx_range=(-20.0, 20.0),
@@ -103,9 +117,7 @@ def _tf_geometric_augmentation(
     )
 
     M_inverse = tf.linalg.inv(M_forward)
-
     transform_params = tf.reshape(M_inverse, [-1])[:8]
-
     transform_batch = tf.expand_dims(transform_params, 0)
     out_shape = tf.convert_to_tensor([shape[0], shape[1]], dtype=tf.int32)
 
@@ -133,11 +145,18 @@ def _tf_geometric_augmentation(
         interpolation="BILINEAR",
     )[0]
 
-    A = tf.convert_to_tensor([[m00, m01], [m10, m11]], dtype=tf.float32)
+    valid_w = tf.raw_ops.ImageProjectiveTransformV2(
+        images=tf.expand_dims(valid, 0),
+        transforms=transform_batch,
+        output_shape=out_shape,
+        fill_mode="CONSTANT",
+        interpolation="NEAREST",
+    )[0]
 
+    A = tf.convert_to_tensor([[m00, m01], [m10, m11]], dtype=tf.float32)
     flow_corrected = tf.einsum("hwi,ji->hwj", flow_w, A)
 
-    return i1_w, i2_w, flow_corrected
+    return i1_w, i2_w, flow_corrected, valid_w
 
 
 @tf.function
@@ -174,7 +193,7 @@ def _apply_photometric_jitter(
         i2 = tf.image.adjust_hue(i2, hue_delta)
         i2 = tf.image.adjust_saturation(i2, sat_factor)
 
-    # 4. Additive Gaussian Noise (Independent per frame to simulate camera sensor noise)
+    # 4. Additive Gaussian Noise
     if tf.random.uniform([]) > 0.5:
         i1 = i1 + tf.random.normal(
             shape=tf.shape(i1), mean=gaussian_noise_mean, stddev=gaussian_noise_stddev
@@ -194,6 +213,7 @@ def augment_sample(
     i1: tf.Tensor,
     i2: tf.Tensor,
     flow: tf.Tensor,
+    valid: tf.Tensor,
     scale=(0.5, 2.0),
     angle=(-17.0, 17.0),
     translate_x=(-20.0, 20.0),
@@ -222,7 +242,7 @@ def augment_sample(
         i1 = tf.image.flip_left_right(i1)
         i2 = tf.image.flip_left_right(i2)
         flow = tf.image.flip_left_right(flow)
-
+        valid = tf.image.flip_left_right(valid)
         flow = flow * tf.constant([-1.0, 1.0], dtype=tf.float32)
 
     # Random Vertical Flip
@@ -230,32 +250,13 @@ def augment_sample(
         i1 = tf.image.flip_up_down(i1)
         i2 = tf.image.flip_up_down(i2)
         flow = tf.image.flip_up_down(flow)
-
+        valid = tf.image.flip_up_down(valid)
         flow = flow * tf.constant([1.0, -1.0], dtype=tf.float32)
 
+    # Random Affine Transforms
     if tf.random.uniform([]) > 0.5:
-        # i1_shape, i2_shape, flow_shape = (
-        #     i1.get_shape(),
-        #     i2.get_shape(),
-        #     flow.get_shape(),
-        # )
-        #
-        # def _geometric_augmentation_wrapper(i1_np, i2_np, flow_np):
-        #     return _geometric_augmentation(
-        #         i1_np, i2_np, flow_np, scale, angle, translate_x, translate_y
-        #     )
-        #
-        # i1, i2, flow = tf.numpy_function(
-        #     func=_geometric_augmentation_wrapper,
-        #     inp=[i1, i2, flow],
-        #     Tout=[tf.float32, tf.float32, tf.float32],
-        # )
-        #
-        # i1.set_shape(i1_shape)
-        # i2.set_shape(i2_shape)
-        # flow.set_shape(flow_shape)
-        i1, i2, flow = _tf_geometric_augmentation(
-            i1, i2, flow, scale, angle, translate_x, translate_y
+        i1, i2, flow, valid = _tf_geometric_augmentation(
+            i1, i2, flow, valid, scale, angle, translate_x, translate_y
         )
 
-    return i1, i2, flow
+    return i1, i2, flow, valid

@@ -5,42 +5,34 @@ import keras
 import numpy as np
 
 
-class GradualDecayScheduler(keras.callbacks.LearningRateScheduler):
-
+class SPyNetSequentialSchedule(keras.callbacks.LearningRateScheduler):
     def __init__(
         self,
-        lr0: float,
-        lrf: float,
-        start_decay_epoch: int,
-        total_epochs: int,
+        initial_lr: float,
+        decay_factor: float,
+        decay_epoch: int,
     ):
-        self.lr0 = lr0
-        self.final_lr = lr0 * lrf
-        self.start_decay_epoch = start_decay_epoch
-        self.total_epochs = total_epochs
+        self.initial_lr = initial_lr
+        self.final_lr = initial_lr * decay_factor
+        self.decay_epoch = decay_epoch
 
         super().__init__(schedule=self._calculate_lr)
 
     def _calculate_lr(self, epoch: int, current_lr: float) -> float:
-        if epoch < self.start_decay_epoch:
-            return self.lr0
-
-        decay_duration = max(1, self.total_epochs - 1 - self.start_decay_epoch)
-        steps_into_decay = epoch - self.start_decay_epoch
-
-        progress = steps_into_decay / decay_duration
-
-        new_lr = self.lr0 - (progress * (self.lr0 - self.final_lr))
-        return max(self.final_lr, new_lr)
+        if epoch < self.decay_epoch:
+            return self.initial_lr
+        else:
+            return self.final_lr
 
 
 class Checkpoint(keras.callbacks.Callback):
     def __init__(
         self,
-        master_model,
+        master_model: keras.Model,
         current_level: int,
         total_epochs: int,
         project_dir: Path,
+        best_val_error: float = np.inf,
     ):
         super().__init__()
         self.master_model = master_model
@@ -52,7 +44,7 @@ class Checkpoint(keras.callbacks.Callback):
         self.state_file = self.project_dir / "training_state.json"
 
         self.weights_dir.mkdir(parents=True, exist_ok=True)
-        self.best_val_error = np.inf
+        self.best_val_error = best_val_error
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
@@ -72,6 +64,13 @@ class Checkpoint(keras.callbacks.Callback):
         if next_epoch >= self.total_epochs:
             next_epoch = 0
             next_level += 1
+            self.best_val_error = None
 
-        state = {"level": next_level, "epoch": next_epoch}
+        state = {
+            "level": next_level,
+            "epoch": next_epoch,
+            "best_epe": (
+                float(self.best_val_error) if self.best_val_error is not None else None
+            ),
+        }
         self.state_file.write_text(json.dumps(state, indent=4))
