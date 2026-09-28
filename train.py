@@ -17,9 +17,9 @@ split_file = Path("data/FlyingChairs/FlyingChairs_train_val.txt")
 train_lists, val_lists = flying_chairs.get_paths(data_dir, split_file)
 
 train_dataset = create_dataset(
-    *train_lists, batch_size=4, shuffle=True, augment_fn=augment_sample, prefetch=2
+    *train_lists, batch_size=8, shuffle=True, augment_fn=augment_sample, prefetch=2
 )
-val_dataset = create_dataset(*val_lists, batch_size=4, shuffle=False, prefetch=2)
+val_dataset = create_dataset(*val_lists, batch_size=8, shuffle=False, prefetch=2)
 
 project_dir = Path("runs/flying_chairs/poc")
 model_file = project_dir / "weights" / "last.keras"
